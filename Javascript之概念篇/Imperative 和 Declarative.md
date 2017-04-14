@@ -1,0 +1,24 @@
+
+#### Imperative 和 Declarative的含义
+
+> Another way of describing this goal is with imperative vs declarative programming style. Imperative code is primarily concerned with explicitly stating how to accomplish a task. Declarative code states what the outcome should be, and leaves the implementation to some other responsibility.
+
+Imperative关注的是how, 功能怎么实现
+Declarative关注的是what, 功能是什么
+
+**总结**: 对于读者来说Declarative形式的代码更加容易理解
+
+
+```javascript
+function getData() {
+	return [1,2,3,4,5];
+}
+
+// imperative
+var tmp = getData();
+var a = tmp[0];
+var b = tmp[3];
+
+// declarative
+var [ a ,,, b ] = getData();​
+```
