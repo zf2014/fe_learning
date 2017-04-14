@@ -8,7 +8,7 @@
 
 <span style="color: red;">**总结**</span>
 1.without side cause/effect -- 无副作用
-2.always same output -- 总是有输出结果
+2.always same output -- 如果Input一样, 那么Output肯定是相同的
 3.has referential transparency -- 引用透明
 
  
