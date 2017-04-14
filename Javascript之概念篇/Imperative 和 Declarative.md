@@ -22,3 +22,6 @@ var b = tmp[3];
 // declarative
 var [ a ,,, b ] = getData();​
 ```
+
+
+[Functional-Light-JS](https://github.com/getify/Functional-Light-JS){:target="_blank"}
