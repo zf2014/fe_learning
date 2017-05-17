@@ -3,3 +3,6 @@ The purpose of async/await functions is to simplify the behavior of using promis
 
 async/await : 简化generator 和 promise组合操作.
 
+在async/await未规范之前, 可以利用第三方库: co
+[co](https://github.com/tj/co "co")
+
