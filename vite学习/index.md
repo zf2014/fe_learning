@@ -1,16 +1,17 @@
-## Vite版本：3.0.4 ##
+# Vite学习记录
+> 版本 3.0.4
 
-一、Vite 插件:
+## 一、Vite 插件:
+
+
 
 不管在 **build** 阶段还是在 **serve** 阶段，vite内部都会利用rollup的编译能力。尤其在plugin的使用上，大部分情况rollup的plugin也同样适用于vite。
 
-> 通过配置vite.config.js文件，可根据项目需求选择性的使用插件：
+通过配置vite.config.js文件，可根据项目需求选择性的使用插件：
 
-1、可通过插件的 apply 属性，明确该插件适用环境（serve 或 build）
-
-2、可通过插件的 enforce 属性，明确该插件的执行顺序（pre，post，null），除此之外按照插件引入的顺序执行
-
-3、除了用户定义的插件外，vite也会根据运行环境内置插件，在build阶段，还会有rollup内置的插件
+- 1、可通过插件的 apply 属性，明确该插件适用环境（serve 或 build）
+- 2、可通过插件的 enforce 属性，明确该插件的执行顺序（pre，post，null），除此之外按照插件引入的顺序执行
+- 3、除了用户定义的插件外，vite也会根据运行环境内置插件，在build阶段，还会有rollup内置的插件
 
 
 vite运行时插件:
