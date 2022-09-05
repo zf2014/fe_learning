@@ -5,10 +5,10 @@
 由于vite插件的设计思路源自于rollup，因此vite不仅可以直接使用rollup已有插件，甚至也支持特殊的vite的插件配置
 vite插件的核心就是钩子函数(**hooks**)，通过钩子函数来维护模块信息
 
-#### 区分使用场景
+##### 区分使用场景
 设置插件的**apply**属性：**serve** 和 **build**
 
-#### 区分使用顺序
+##### 区分使用顺序
 设置插件的**enforce**属性：**pre**、**post**、**undefined**
 
 ## 二、Hooks
@@ -21,6 +21,7 @@ vite插件的核心就是钩子函数(**hooks**)，通过钩子函数来维护�
 7. **★resolveId**：处理资源ID
 8. **★load**：加载资源内容
 9. **★transform**：对资源进行内容转换，及生成source map数据
+10. **configurePreviewServer**：服务于 vite preview 服务
 
 ## 三、vite运行时插件
 #### ensureWatchPlugin  
@@ -671,7 +672,7 @@ build阶段，根据所有html模块的chunk信息，对 processedHtml 内存中
 > HMR：hot module replacement -- 模块热替换
 
 > vite HRM工作原理：
-### 启动服务
+#### 启动服务
 >1. 会创建一个ws服务端，为后面与客户端做准备
 >
 >2. 利用 [chokidar](https://www.npmjs.com/package/chokidar) 对文件监控
@@ -719,7 +720,7 @@ build阶段，根据所有html模块的chunk信息，对 processedHtml 内存中
         >>>type = css-update，则
             >>>>① 删除原 <link> 样式
             >>>>② 新增新的<link href=“...”>
-### 页面访问
+#### 页面访问
 
  1. 会先经过@vite/plugin-vue插件，此时所有vue文件上都会出现以下代码：
  ```javascript
@@ -752,42 +753,59 @@ import.meta.hot = __vite__createHotContext(vuePath)
 
 6. 在 ws 客户端得到更新消息, 根据消息内容, 找到待热更模块, 执行热更方法(**reload** 或 **rerender**)
 
-
-## 五、ModuleGraph【模块画像】
-用于记录系统中所有模块的依赖关系和模块信息【ModuleNode】
-
-ensureEntryFromUrl: 通过 PluginContainer, 将url地址生成对应的[url, resolveId, meta], 并由此创建一个ModuleNode对象, 并将其与url、resolveId、file建立关系。
-
-## 六、pre-bounding机制
+## 六、预绑定机制(Pre-Bounding)
 默认是作用于第三方依赖模块，因为第三方的依赖模块变更频率不快
 为什么需要优化依赖：
-    1、 统一依赖模块的结构，保证ESM能够正常使用
-    2、减少请求次数，提高服务效率
+1. 统一依赖模块的结构，保证ESM能够正常使用
+2. 减少请求次数，提高服务效率
 
-1、读取metedata数据
-    用于记录需要被优化的依赖模块信息，并且会落地到 node_modules/.vite/deps/_metadata.json 文件中
-    来源：
-         从已有的 _metadata.json 获取 -》兼容之前版本的文件
-         config.optimizeDeps.force -》强制获取 -》配置及扫描
-2、获取可优化依赖模块信息：如果是首次启动 或者 force=true：
-     2.1、 添加手动配置的优化依赖：根据config.optimizeDeps.include配置，并将其设置为 metadata.discovered
-     2.2、开启默认扫描机制(非build阶段)，收集项目切入点(entries)，三选一：
-        根据 config.optimizeDeps.entries 配置
-        根据 config.build.rollupOptions.input 配置
-        根据 项目中任意的 html 文件 -- 默认方式
-     2.3、将收集到的 entries 通过esbuild进行编译处理
-        通过 esbuild 编译，可以进一步收集到 每个切入点(entry)所依赖的模块，然后对这些模块进行刷选，
-        找到符合条件(bare imports)的模块信息
-        通过 esbuild 编译时的不同事件(onResolve 和 onLoad)，对依赖模块及模块内容做适当的处理，最终收集并记录下
-        需要的bare imports
-3、开始执行优化：runOptimizeDeps 
-    3.1、 对所有可优化的模块，进行一次esbuild编译，在编译过程中会将编译的结果文件存到 node_modules/.vite/deps/_temp/ 目录中
-    3.2、将优化后信息设置到 metadata.optimized 字段上
-    3.3、esbuild编译的结果，可能会产生一些 chunks 信息，则会设置到 metadata.chunks 字段上
-    3.4、最终将所有的metadata信息 落地到 node_modules/.vite/deps/_temp/_metadata.json 文件上
-4、最终将 node_modules/.vite/deps/_temp 重命名为 node_modules/.vite/deps
+#### 处理逻辑
+在启动 npm serve 后, 会根据 config.optimizeDeps 配置来决定是否需要开启优化扫描, 默认为**true**
+1. 初始化[metedata](https://github.com/vitejs/vite/blob/d30f881c302d91d90a1d5658d7aedab9803d432b/packages/vite/src/node/optimizer/index.ts#L186)
+    1. 初始化获得 - **首次** 或 **optimizeDeps.force == true**
+    2. 从已有_metadata.json文字间中读取[版本旧兼容]
+    3. 数据结构:
+        - hash  **→** 基于config.optimizeDeps创建的**主hash**值
+        - browserHash **→** 基于**主hash** 及 额外信息创建的hash值
+        - optimized **→** 已优化模块
+        - discovered **→** 待优化模块
+        - chunks **→** 非入口模块的模块
+        - depInfoList **→** 依赖模块信息
+2. 创建一个优化器: **depsOptimizer**
+    - 关联**metedata**
+    - 各种便利方法: registerMissingImport, run, delayDepsOptimizerUntil等等
+    - 配置信息 - config.optimizeDeps
 
-小结：通过将会在内存中记录所有可优化模块的信息，该模块信息可用于插件中【importAnalysisPlugin 】，重写import/export表达式
+3. 扫描编译: 如果是 **首次** 或 **optimizeDeps.force == true**
+    1. 添加手动配置可优化模块：根据config.optimizeDeps.include配置, 并将其保存到**metadata.discovered**
+    2. 收集项目切入点(**entries**)，三选一：
+       1. 根据 **config.optimizeDeps.entries** 配置
+       2. 根据 **config.build.rollupOptions.input** 配置
+       3. 根据 项目中任意的 html 文件[**默认**]
+    3. 通过**esbuild**对每个**entries**进行编译处理, 找到可优化的bare imports, 并将其补充到**metadata.discovered**
+4. 执行优化: [runOptimizeDeps](https://github.com/vitejs/vite/blob/d30f881c302d91d90a1d5658d7aedab9803d432b/packages/vite/src/node/optimizer/index.ts#L446)
+    1. 将metadata中的 **optimized** 和 **discovered** 合并到一个 knownDeps 中
+    2. 对 knownDeps 中每个模块再次进行esbuild编译, 并将编译的结果输出 node_modules/.vite/deps/**_temp**/ 目录下
+    3. 创建一个新的 metadata 对象(**和上面的不是同一个对象**)
+    4. 将优化后的模块信息维护到 metadata.optimized
+    5. esbuild编译的结果产生的 chunks 信息，则会被维护到 metadata.chunks
+    6. 最终将所有的metadata信息 已文件的形式(_metadata.json)保存下来
+5. 完成本次优化扫描, 并在合适的时间会把 node_modules/.vite/deps/**_temp** 重命名为 node_modules/.vite/deps
 
------
+**<span style="color: red">注</span>**: 并不是所有可优化模块在扫描阶段就能完成所有的Pre-Bounding工作的, vite在定义的内部插件中, 还会继续监听模块导入信息, 并且通过 **depsOptimizer.registerMissingImport** 来添加优化模块
+**depsOptimizer.registerMissingImport**执行过程:
+1. 会把遗漏模块添加到 **metadata.discovered** 中, 
+2. 设置newDepsDiscovered = true, 表示此时有新发现
+3. 再次执行 runOptimizeDeps() -- 参考上面的**步骤4**
 
+**<span style="color: red">注</span>**: 甚至可以通过 **vite optimize** 命令的方式触发
+
+## 七、ModuleGraph【模块画像】
+用于记录系统中所有模块的依赖关系和模块信息【ModuleNode】
+
+ensureEntryFromUrl: 通过 PluginContainer, 将url地址生成对应的[**url, resolveId, meta**], 并由此创建一个ModuleNode对象, 并将其与url、resolveId、file建立关系。
+
+------
+
+## 八、vite build
+本质上就是采用rollup.js进行编译
