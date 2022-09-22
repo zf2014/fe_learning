@@ -560,190 +560,182 @@ build阶段，根据所有html模块的chunk信息，对 processedHtml 内存中
 
 
 ## 四、plugin-vue插件
-> 首先会在vite.config.js配置文件中, 配置  @vitejs/plugin-vue 插件
->
->在 **<span style="color: red">load</span>** 阶段
->仅处理.vue依赖
->>1. 如果是内置的 EXPORT_HELPER_ID 依赖，则加载内置辅助代码
-    >>2. 否则必须是带?vue的导入地址
-        >>>1. 如果 importUrl = xxx.vue?vue&src，则直接读取xxx.vue内容
-        >>>2. 否则 先通过[@vue/compiler-sfc](https://github.com/vuejs/core/tree/main/packages/compiler-sfc)将xxx.vue分析后得到 descriptor
-        >>>3. 再根据地址上的 ?type&index=0 参数，得到具体内容
-        >>>type类型：script、template、style 和 customBlocks
->
->在 **<span style="color: red">transform</span>** 阶段
->替换模块内容 
->1. 如果不是.vue文件且没有?vue参数，则直接返回文件内容
->2. 如果是.vue文件且没有?vue参数, 说明该模块还未被vue编译器处理过
-    >>1. 通过 @vue/compiler-sfc 对vue文件进行编译，得到不同类型的信息
-        >>>1. 处理 **script**
-            >>>>① 如果未提供src，则会通过ts方式进行编译，得到编译代码 const _sfc_main = { ... }
-            >>>>```javascript
-            >>>> const _sfc_main = { ... }
-            >>>>```
-            >>>>② 如果提供src
-            >>>>```javascript
-            >>>> import _sfc_main from xxx.vue?vue&type=script&scoped=&其他属性
-            >>>>```
-            >>>
-            >>>2. 处理 **templte**
-            >>>>① 如果未提供lang 且 未提供src
-            >>>>```javascript
-            >>>> const _sfc_render = { ... }
-            >>>>```
-            >>>>② 否则则会生成
-            >>>>```javascript
-            >>>> import { render as _sfc_render } from xxx.vue?vue&type=template&scoped=&其他属性
-            >>>>```
-        >>>
-        >>>3. 处理 **style**
-            >>>>① 如果是非css module
-            >>>>```javascript
-            >>>> import _style_${index} from xxx.vue?vue&type=style&index=${index}&scoped=&inline&lang.css
-            >>>>```
-            >>>>② 如果是css module，则会生成
-            >>>>```javascript
-            >>>> import moduleValueN from xxx.vue?vue&type=style&index=${index}&scoped=&inline&lang.module.css
-            >>>>const cssModules = {moduleName: moduleValue, moduleName2: moduleValue2,...,moduleNameN: moduleValueN}
-            >>>>```
-        >>>
-        >>>4. 处理**自定义**模块
-            >>>>① 生成自定义代码：
-            >>>>```javascript
-            >>>>import block_${index} from xxx.vue?vue&type=customType&scoped=&其他属性
-            >>>>if (typeof block_${index} === ‘function’) { block_${index}( _sfc_main ) }
-            >>>>```
-    >>2. 初始化vue组件对象
-        >>>```javascript
-        >>> _sfc_main.render = _sfc_render
-        >>> _sfc_main.styles = [ _style_1, _style_2,..., _style_n ]
-        >>> _sfc_main.__cssModules = cssModules 
-        >>>```
-    >>3. 如果是scoped style，则设置
-        >>>```javascript
-        >>> _sfc_main.__scopedId = `data-v-${descriptor.id}`
-        >>>```
-    >>4. 如果是serve环境 或者 开启 devToolsEnabled 配置
-        >>>```javascript
-        >>> _sfc_main.__file = fileName
-        >>>```
-    >>5. 如果支持HMR
-        >>>```javascript
-        >>> _sfc_main.__hmrId = descriptor.id
-        >>> // __VUE_HMR_RUNTIME__ vue内部用于支持HMR
-        >>> typeof __VUE_HMR_RUNTIME__ !== 'undefined' && __VUE_HMR_RUNTIME__.createRecord(_sfc_main.__hmrId, _sfc_main)
-        >>> export const _rerender_only = true // 如果仅仅是template变化
-        >>> import.meta.hot.accept(mod => {
-        >>>    if (!mod) return
-        >>>    const { default: updated, _rerender_only } = mod
-        >>>    if (_rerender_only) {
-        >>>        __VUE_HMR_RUNTIME__.rerender(updated.__hmrId, updated.render)
-        >>>    } else {
-        >>>        __VUE_HMR_RUNTIME__.reload(updated.__hmrId, updated)
-        >>>    }
-        >>>})
-        >>>```
-        >>>注：这里的 [\_\_VUE_HMR_RUNTIME__](https://github.com/vuejs/core/blob/main/packages/runtime-core/src/hmr.ts#L31)，是在vue内部中定义了3个方法：
-            >>>>- createRecord -- 创建组件记录
-            >>>>- rerender -- 当前组件重新渲染
-            >>>>- reload -- 当前组件重新加载
-    >>6. 如果是支持SSR，则插入SSR相关代码
-        >>>```javascript
-        >>> import _export_sfc from '${EXPORT_HELPER_ID}'
-        >>> // 就是上面第2,3,4,5步，用于丰富 _sfc_main 对象的
-        >>> export default /*#__PURE__*/_export_sfc(_sfc_main, {....})
-        >>>```
+首先在vite.config.js配置文件中, 配置 @vitejs/plugin-vue 插件
 
->3. 如果带有?vue参数，说明该文件是原始vue文件中的某个部分
-    >>1. 如果type = **template**，通过 @vue/compiler-sfc 对模板内容编译
-    >>> ```javascript
-    >>> export const render = ....
-    >>> import.meta.hot.accept(({ render }) => {
-    >>>     __VUE_HMR_RUNTIME__.rerender(${JSON.stringify(descriptor.id)}, render)
-    >>> })`
-    >>>```
-    >>>
-    >>2. 如果type = **style**，通过 @vue/compiler-sfc 对样式内容编译
-    >>> ```javascript
-    >>> export default css code
-    >>>```
+在 **<span style="color: red">load</span>** 阶段
+1. 如果是内置的 EXPORT_HELPER_ID 依赖，则加载内置辅助代码
+2. 否则必须是带?vue的导入地址
+   - 如果 importUrl = xxx.vue?vue&src，则直接读取xxx.vue内容
+   - 否则 先通过[@vue/compiler-sfc](https://github.com/vuejs/core/tree/main/packages/compiler-sfc)将xxx.vue分析后得到 descriptor
+   - 再根据地址上的 ?type&index=0 参数，得到具体内容
+   type类型：script、template、style 和 customBlocks
+
+在 **<span style="color: red">transform</span>** 阶段
+1. 如果不是.vue文件且没有?vue参数，则直接返回文件内容
+2. 如果是.vue文件且没有?vue参数, 说明该模块还未被vue编译器处理过
+    1. 通过 @vue/compiler-sfc 对vue文件进行编译，得到不同类型的信息
+        1. 处理 **script**
+            ① 如果未提供src，则会通过ts方式进行编译，得到编译代码 const _sfc_main = { ... }
+            ```javascript
+            const _sfc_main = { ... }
+            ```
+            ② 如果提供src
+            ```javascript
+            import _sfc_main from xxx.vue?vue&type=script&scoped=&其他属性
+            ```
+
+        2. 处理 **templte**
+            ① 如果未提供lang 且 未提供src
+            ```javascript
+            const _sfc_render = { ... }
+            ```
+            ② 否则则会生成
+            ```javascript
+            import { render as _sfc_render } from xxx.vue?vue&type=template&scoped=&其他属性
+            ```
+        3. 处理 **style**
+            ① 如果是非css module
+            ```javascript
+            import _style_${index} from xxx.vue?vue&type=style&index=${index}&scoped=&inline&lang.css
+            ```
+            ② 如果是css module，则会生成
+            ```javascript
+            import moduleValueN from xxx.vue?vue&type=style&index=${index}&scoped=&inline&lang.module.css
+            const cssModules = {moduleName: moduleValue, moduleName2: moduleValue2,...,moduleNameN: moduleValueN}
+            ```
+        4. 处理**自定义**模块
+            ① 生成自定义代码：
+            ```javascript
+            import block_${index} from xxx.vue?vue&type=customType&scoped=&其他属性
+            if (typeof block_${index} === ‘function’) { block_${index}( _sfc_main ) }
+            ```
+    2. 初始化vue组件对象
+        ```javascript
+         _sfc_main.render = _sfc_render
+         _sfc_main.styles = [ _style_1, _style_2,..., _style_n ]
+         _sfc_main.__cssModules = cssModules 
+        ```
+    3. 如果是scoped style，则设置
+        ```javascript
+         _sfc_main.__scopedId = `data-v-${descriptor.id}`
+        ```
+    4. 如果是serve环境 或者 开启 devToolsEnabled 配置
+        ```javascript
+         _sfc_main.__file = fileName
+        ```
+    5. 如果支持HMR
+        ```javascript
+         _sfc_main.__hmrId = descriptor.id
+         // __VUE_HMR_RUNTIME__ vue内部用于支持HMR
+         typeof __VUE_HMR_RUNTIME__ !== 'undefined' && __VUE_HMR_RUNTIME__.createRecord(_sfc_main.__hmrId, _sfc_main)
+         export const _rerender_only = true // 如果仅仅是template变化
+         import.meta.hot.accept(mod => {
+            if (!mod) return
+            const { default: updated, _rerender_only } = mod
+            if (_rerender_only) {
+                __VUE_HMR_RUNTIME__.rerender(updated.__hmrId, updated.render)
+            } else {
+                __VUE_HMR_RUNTIME__.reload(updated.__hmrId, updated)
+            }
+        })
+        ```
+        注：这里的 [\_\_VUE_HMR_RUNTIME__](https://github.com/vuejs/core/blob/main/packages/runtime-core/src/hmr.ts#L31)，是在vue内部中定义了3个方法：
+            - createRecord -- 创建组件记录
+            - rerender -- 当前组件重新渲染
+            - reload -- 当前组件重新加载
+    6. 如果是支持SSR，则插入SSR相关代码
+        ```javascript
+         import _export_sfc from '${EXPORT_HELPER_ID}'
+         // 就是上面第2,3,4,5步，用于丰富 _sfc_main 对象的
+         export default /*#__PURE__*/_export_sfc(_sfc_main, {....})
+        ```
+
+3. 如果带有?vue参数，说明该文件是原始vue文件中的某个部分
+    1. 如果type = **template**，通过 @vue/compiler-sfc 对模板内容编译
+     ```javascript
+     export const render = ....
+     import.meta.hot.accept(({ render }) => {
+         __VUE_HMR_RUNTIME__.rerender(${JSON.stringify(descriptor.id)}, render)
+     })`
+    ```
+    
+    1. 如果type = **style**，通过 @vue/compiler-sfc 对样式内容编译
+     ```javascript
+     export default css code
+    ```
         
 ## 五、HMR解析 -- 以Vue项目为例
-> HMR：hot module replacement -- 模块热替换
+HMR：hot module replacement -- 模块热替换
 
-> vite HRM工作原理：
+vite HRM工作原理：
 #### 启动服务
->1. 会创建一个ws服务端，为后面与客户端做准备
->
->2. 利用 [chokidar](https://www.npmjs.com/package/chokidar) 对文件监控
-    >> 监控事件:
-    >>>- change(改变)
-    >>>- add(新增)
-    >>>- unlink(删除)
-    >>
-    >> 可监控的文件范围：
-    >> ① 监控config.root下所有文件
-    >> ② 排除 **/.git/**
-    >> ③ 排除 **/node_modules/**
-    >> ④ 排除 **/test_results/**
-    >> ⑤ 排除 config.watch.ignored 配置项
->
->3. 发现文件有变化 -- change，触发 **[handleHMRUpdate](https://github.com/vitejs/vite/blob/5df788dfe2d89e541461e166f03afb38c2f1dd7e/packages/vite/src/node/server/hmr.ts#L41)** 方法
-    >>1. 如果变化文件为 .env文件、vite.config.js文件、config.dependencies配置的文件，则会重启服务
-    >>2. 如果变化的文件是 dist/client/client.mjs，则会通过ws服务端向客户端发送full-reload消息
-    >>3. 获得变化模块集合
-        >>>1. 当前文件的模块
-        >>>2. plugin.handleHotUpdate(context)钩子函数执行结果
-    >>4. 根据变化模块集合，得到模块变更集合updates：
-         >>>- type：`${moduleInfo.type}-update`
-         >>>- path: 更新模块的地址
-    >>5. 通过ws服务端向**ws客户端**发送updates信息     
->
->4. 在@vite/client内部会创建一个**ws客户端**
->
->5. 根据发送过来消息类型，决定执行不同的处理方式，消息类型payload.type：
-    >>- **connected**：与服务端建立连接后触发
-    >>- **update**：需要执行更新，该事件类型是HMR关键
-    >>- **custom**：执行自定义事件
-    >>- **full-reload**：重新刷新页面
-    >>- **prune**：清理事件
-    >>- **error**：错误事件
->
->6. 事件类型为**update**：
-    >>1. 得到本次更新的所有可更新数据 updates
-    >>2. 依次处理每个 updates，根据其模块类型，执行不同的处理方式
-        >>>type = js-update，执行 fetchUpdate(...)
-            >>>>① 根据当前变更文件 和 hotModulesMap，得到与文件关联的依赖模块 和 热更方法
-            >>>>② 重新加载待热更文件
-            >>>>③ 执行热更方法
-        >>>
-        >>>type = css-update，则
-            >>>>① 删除原 <link> 样式
-            >>>>② 新增新的<link href=“...”>
+1. 会创建一个ws服务端，为后面与客户端做准备
+
+2. 利用 [chokidar](https://www.npmjs.com/package/chokidar) 对文件监控
+    - 监控事件:
+        change(改变)
+        add(新增)
+        unlink(删除)
+
+    - 可监控的文件范围：
+        ① 监控config.root下所有文件
+        ② 排除 **/.git/**
+        ③ 排除 **/node_modules/**
+        ④ 排除 **/test_results/**
+        ⑤ 排除 config.watch.ignored 配置项
+3. 发现文件有变化时，触发 **[handleHMRUpdate](https://github.com/vitejs/vite/blob/5df788dfe2d89e541461e166f03afb38c2f1dd7e/packages/vite/src/node/server/hmr.ts#L41)** 方法
+    1. 如果变化文件为 .env文件、vite.config.js文件、config.dependencies配置的文件，则会重启服务
+    2. 如果变化的文件是 dist/client/client.mjs，则会通过ws服务端向客户端发送full-reload消息
+    3. 获得变化模块集合
+        1. 当前文件的模块
+        2. plugin.handleHotUpdate(context)钩子函数执行结果
+    4. 根据变化模块集合，得到模块变更集合updates：
+        type：`${moduleInfo.type}-update`
+        path: 更新模块的地址
+    5. 通过ws服务端向**ws客户端**发送updates信息     
+
+4. 在@vite/client内部会创建一个**ws客户端**
+5. 根据发送过来消息类型，决定执行不同的处理方式，消息类型payload.type：
+    **connected**：与服务端建立连接后触发
+    **update**：需要执行更新，该事件类型是HMR关键
+    **custom**：执行自定义事件
+    **full-reload**：重新刷新页面
+    **prune**：清理事件
+    **error**：错误事件
+6. 事件类型为**update**：
+    1. 得到本次更新的所有可更新数据 updates
+    2. 依次处理每个 updates，根据其模块类型，执行不同的处理方式
+        - type = js-update，执行 fetchUpdate(...)
+            ① 根据当前变更文件 和 hotModulesMap，得到与文件关联的依赖模块 和 热更方法
+            ② 重新加载待热更文件
+            ③ 执行热更方法
+        - type = css-update，则
+            ① 删除原 <link> 样式
+            ② 新增新的<link href=“...”>
 #### 页面访问
 
- 1. 会先经过@vite/plugin-vue插件，此时所有vue文件上都会出现以下代码：
- ```javascript
- __VUE_HMR_RUNTIME__.createRecord(_sfc_main.__hmrId, _sfc_main)
- import.meta.hot.accept(mod => {
-   if (!mod) return
-     const { default: updated, _rerender_only } = mod
-   if (_rerender_only) {
-     // 仅仅是模板变化
-     __VUE_HMR_RUNTIME__.rerender(updated.__hmrId, updated.render)
-   } else {
-     // 组件其他内容变化
-     __VUE_HMR_RUNTIME__.reload(updated.__hmrId, updated)
-   }
- })
- ```
+1. 会先经过@vite/plugin-vue插件，此时所有vue文件上都会出现以下代码：
+    ```javascript
+    __VUE_HMR_RUNTIME__.createRecord(_sfc_main.__hmrId, _sfc_main)
+    import.meta.hot.accept(mod => {
+    if (!mod) return
+        const { default: updated, _rerender_only } = mod
+    if (_rerender_only) {
+        // 仅仅是模板变化
+        __VUE_HMR_RUNTIME__.rerender(updated.__hmrId, updated.render)
+    } else {
+        // 组件其他内容变化
+        __VUE_HMR_RUNTIME__.reload(updated.__hmrId, updated)
+    }
+    })
+    ```
 
 2. 然后再经过 importAnalysisPlugin，会在该模块代码的头部添加以下代码
-```javascript
-import { createHotContext as __vite__createHotContext } from '@vite/client'
-import.meta.hot = __vite__createHotContext(vuePath)
-```
-在 @vite/client 会创建一个ws客户端, 监听来自于服务端的消息, 并以此来触发热更
+    ```javascript
+    import { createHotContext as __vite__createHotContext } from '@vite/client'
+    import.meta.hot = __vite__createHotContext(vuePath)
+    ```
+    @vite/client 模块内部，除了提供一些实用的方法外，同时还会创建一个ws客户端，用于执行模块热替换。
 
 3. 当组件完成实例化时, 会把组件实例[注册](https://github.com/vuejs/core/blob/main/packages/runtime-core/src/renderer.ts#L1211)到HRM中
 
