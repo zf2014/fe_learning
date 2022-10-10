@@ -563,17 +563,16 @@ build阶段，根据所有html模块的chunk信息，对 processedHtml 内存中
 首先在vite.config.js配置文件中, 配置 @vitejs/plugin-vue 插件
 
 在 **<span style="color: red">load</span>** 阶段
-1. 如果是内置的 EXPORT_HELPER_ID 依赖，则加载内置辅助代码
+1. 如果是内置的 EXPORT_HELPER_ID 模块，则加载内置模块代码
 2. 否则必须是带?vue的导入地址
-   - 如果 importUrl = xxx.vue?vue&src，则直接读取xxx.vue内容
-   - 否则 先通过[@vue/compiler-sfc](https://github.com/vuejs/core/tree/main/packages/compiler-sfc)将xxx.vue分析后得到 descriptor
-   - 再根据地址上的 ?type&index=0 参数，得到具体内容
-   type类型：script、template、style 和 customBlocks
+   - 如果importUrl = xxx.vue?vue&src，则直接读取该.vue内容
+   - 如果是原始文件在经过transform处理后，特殊的import表达式xxx.vue?vue&type=xxx&...，则会根据type不同，返回不同的内容
+   type：script、template、style 和 customBlocks
 
 在 **<span style="color: red">transform</span>** 阶段
 1. 如果不是.vue文件且没有?vue参数，则直接返回文件内容
-2. 如果是.vue文件且没有?vue参数, 说明该模块还未被vue编译器处理过
-    1. 通过 @vue/compiler-sfc 对vue文件进行编译，得到不同类型的信息
+2. 如果是.vue文件且没有?vue参数, 说明该文件内容需要被编译处理
+    1. 通过 [@vue/compiler-sfc](https://github.com/vuejs/core/tree/main/packages/compiler-sfc) 对vue文件进行编译，得到不同类型的信息
         1. 处理 **script**
             ① 如果未提供src，则会通过ts方式进行编译，得到编译代码 const _sfc_main = { ... }
             ```javascript
@@ -625,11 +624,16 @@ build阶段，根据所有html模块的chunk信息，对 processedHtml 内存中
         ```
     5. 如果支持HMR
         ```javascript
+        // 这个 descriptor.id 值，是根据文件路径 和 文件内容计算得到一个Hash值
          _sfc_main.__hmrId = descriptor.id
-         // __VUE_HMR_RUNTIME__ vue内部用于支持HMR
-         typeof __VUE_HMR_RUNTIME__ !== 'undefined' && __VUE_HMR_RUNTIME__.createRecord(_sfc_main.__hmrId, _sfc_main)
-         export const _rerender_only = true // 如果仅仅是template变化
-         import.meta.hot.accept(mod => {
+         // __VUE_HMR_RUNTIME__是vue内部用于支持HMR一个对象
+         // 再通过 createRecord 方法，会创建一个映射对象，并且将组件配置、组件实例 与 hmrId建立映射关系
+         // 在Vue框架内部，当组件实例化的时候，会调用registerHMR(instance)方法，将组件实例也被记录在内存中
+        typeof __VUE_HMR_RUNTIME__ !== 'undefined' && __VUE_HMR_RUNTIME__.createRecord(_sfc_main.__hmrId, _sfc_main)
+        // 判断是否只有template变化，在插件内部判断得出
+        export const _rerender_only = true
+        // 将文件和热更方法建立关系
+        import.meta.hot.accept(mod => {
             if (!mod) return
             const { default: updated, _rerender_only } = mod
             if (_rerender_only) {
@@ -639,18 +643,41 @@ build阶段，根据所有html模块的chunk信息，对 processedHtml 内存中
             }
         })
         ```
-        注：这里的 [\_\_VUE_HMR_RUNTIME__](https://github.com/vuejs/core/blob/main/packages/runtime-core/src/hmr.ts#L31)，是在vue内部中定义了3个方法：
-            - createRecord -- 创建组件记录
-            - rerender -- 当前组件重新渲染
-            - reload -- 当前组件重新加载
+        **注**：这里的 [\_\_VUE_HMR_RUNTIME__](https://github.com/vuejs/core/blob/main/packages/runtime-core/src/hmr.ts#L31)，是在vue内部中定义了3个方法：
+            **createRecord** -- 创建组件记录
+            **rerender** -- 当前组件重新渲染
+            **reload** -- 当前组件重新加载
     6. 如果是支持SSR，则插入SSR相关代码
         ```javascript
          import _export_sfc from '${EXPORT_HELPER_ID}'
          // 就是上面第2,3,4,5步，用于丰富 _sfc_main 对象的
          export default /*#__PURE__*/_export_sfc(_sfc_main, {....})
         ```
+    7. 最终将上述内容合并在一起得到：
+        ```javascript
+        import _export_sfc from '${EXPORT_HELPER_ID}'
+        import _sfc_main from 'xxx.vue?vue&type=script&scoped=&...'
+        import { render as _sfc_render } from 'xxx.vue?vue&type=template&scoped=&...'
+        // 多个或单个
+        import _style_${index} from `xxx.vue?vue&type=style&index=${index}&scoped=&...`
 
-3. 如果带有?vue参数，说明该文件是原始vue文件中的某个部分
+        // 多个或单个
+        import blockN from `xxx.vue?vue&type=${block.type}&index=${index}=&...`
+        if (typeof blockN === 'function') blockN(_sfc_main)
+
+        _sfc_main.render = _sfc_render
+        _sfc_main.styles = [ _style_1, _style_2, _style_3 ]
+        _sfc_main.__cssModules = cssModules 
+        _sfc_main.__scopedId = `data-v-${descriptor.id}`
+
+        // TODO hmr部分代码 参考上面第5步
+
+        // 为 _sfc_main 扩展其他数据信息
+        _export_sfc(_sfc_main, {...})
+
+        ```
+3. 接下来就是针对第2步每个import ... from '.vue?vue&type...'进行处理
+    在执行transform之前，会先通过load钩子函数，根据不同类型得到原始的内容
     1. 如果type = **template**，通过 @vue/compiler-sfc 对模板内容编译
      ```javascript
      export const render = ....
