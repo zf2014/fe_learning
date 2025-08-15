@@ -62,7 +62,7 @@ println('我输入的名字是: {name}') // 输出: zhangf
 #### 复合类型
 > 两种: tuple and array
 
-##### tuples(拓扑)
+##### tuples(元组)
 拓扑型数据的长度是固定的, 一旦申明后, 则无法改变.
 > Tuples have a fixed length: once declared, they cannot grow or shrink in size
 
@@ -447,3 +447,39 @@ use std::{cmp::Ordering, io};
 use std::collections::*;
 ```
 
+----------------------------------------------
+## Rust 和 Js 间差异
+1 Rust属于静态语言, Js属于动态语言
+2 Rust可以在同一个作用域内声明同名称的变量(Shadowing)
+3 Rust和Js都采用IEEE-754规范, 但是Js不区分单(双)精度
+4 Rust中新增了Tuple(元组)复合类型, 且 Array包含的类型必须是一致且固定长度
+5 Rust通过索引读取Array时, 如果索引超过了该Array的边界时, 会触发panic
+6 Rust中Statement(语句) 和 Expression(表达式)是存在差异的
+ - Statement 不输出结果, 因此无法被再次赋值
+ - Expression 能输出结果, 因此允许被再次赋值
+7 Rust中方法体由Statement 和 Expression(可选的结束表达式)组成
+  ``` rs
+  fn hello_world () -> isize {
+    let x: isize = 5; // 语句
+    x + 1 // 结束表达式
+  }
+  ```
+8 Rust中if...else...属于**表达式**, 即可以通过let语句来赋值. 但是必须保证不同条件返回的类型是一致的
+ ``` rs
+  let condition = true;
+  let if_value = if condition { 1 } else { 0 };
+ ```
+9 Rust新增**loop表达式**, 可以通过 **break** 或 **continue** 来控制其内部逻辑
+  loop允许**嵌套**
+ ``` rs
+  let mut counter = 0;
+    let result = loop {
+        counter += 1;
+        if counter == 10 {
+            break counter * 2;
+        }
+    };
+ ```
+
+ 10 Rust独有特性**所有权(ownership)** 
+ > It enables Rust to make memory safety guarantees without needing a garbage collector

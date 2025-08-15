@@ -502,7 +502,7 @@ build阶段，根据所有html模块的chunk信息，对 processedHtml 内存中
 >1. 排除无需分析的模块：.json、.map、.css 或 带?direct参数
 >2. 获得当前模块所有的import和export语句
 >根据当前模块的父模块的文件后缀，提示用户安装合适的插件 -- vue文件、jsx文件
->3. 分析每一条import语句 - **【循环】**
+>3. 分析每一条import语句
     >>1. 判断是否存在import.meta.hot表达式，如果存在则表示该模块支持HRM -- 参考@vite/vue-plugin
     >> ① 分析import.meta.hot.accept(depsExp，...)表达式，并收集依赖信息到 **acceptedUrls** 中
     >> ② 分析import.meta.hot.acceptExports(exportsExp，...)表达式，并收集暴露信息到 **acceptedExports** 中
@@ -547,13 +547,13 @@ build阶段，根据所有html模块的chunk信息，对 processedHtml 内存中
     >>```
     >>
     >> **import.meta.hot**定义的[方法](https://github.com/vitejs/vite/blob/main/packages/vite/src/client/client.ts#L520)：
-        >>> **accept**(deps, callback)  -- 记录热更模块 和 热更方法，并且通过 hotModulesMap 维护到内存中
-        >>> **acceptExports**(_, callback) -- 同 accept方法类似，记录当前文件
-        >>> **dispose**(callback)：记录当前模块的 disposer 方法
-        >>> **prune**(callback)：记录当前模块 prune 方法
-        >>> **invalidate**：失效，重新加载页面
-        >>> **on**：添加自定义的事件，执行 notifyListeners(event, data) 方法时，会被触发
-        >>> **send**(event, data)：往服务端发送消息，消息结构：{ type: 'custom', event, data }
+        >>> **accept**(deps, callback) - 等待 依赖模块 或 自身模块 完成热更后, 触发回调函数
+        >>> **acceptExports**(_, callback) - 等待 自身模块 完成热更后, 触发回调函数
+        >>> **dispose**(callback) - 当 依赖模块 或 自身模块 有变更时(未完成), 触发回调函数 callback(data)
+        >>> **prune**(callback) - 通过 ws.send 发送 type: prune 消息来通知触发回调函数
+        >>> **invalidate**(message) - 触发 vite:invalidate 事件, 同时 发送一条 ws 消息 
+        >>> **on**(event, callback) - 注册 不同事件(vite内置事件 或 用户自定义事件) 回调函数
+        >>> **send**(event, data) - 触发自定义事件, 并且会想 ws 服务发送一条类型为 custom 的数据
 >6. 如果有 acceptedUrls, 则对其进行格式化
 >7. 如果importer是非css文件，则更新 其importer模块的模块信息
 >8. 输出模块内容
@@ -696,7 +696,7 @@ HMR：hot module replacement -- 模块热替换
 
 vite HRM工作原理：
 #### 启动服务
-1. 会创建一个ws服务端，为后面与客户端做准备
+1. 会创建一个ws服务端, 可用于通信
 
 2. 利用 [chokidar](https://www.npmjs.com/package/chokidar) 对文件监控
     - 监控事件:
@@ -721,15 +721,17 @@ vite HRM工作原理：
         path: 更新模块的地址
     5. 通过ws服务端向**ws客户端**发送updates信息     
 
-4. 在@vite/client内部会创建一个**ws客户端**
-5. 根据发送过来消息类型，决定执行不同的处理方式，消息类型payload.type：
+4. 让 vite 识别是否为可 HMR 模块, 通过判断是否存在 import.meta.hot.xxx(...)语句 (在 importAnalysisPlugin 插件中实现)
+5. 在可 HMR 的模块代码中, 会插入 import "@vite/client" 和 import.meta.hot = createHotContext(moduleId) 2段代码
+6. 然后根据 ws 通信消息的数据类型来执行不同行为
+   触发方式: 手动(自定义vite插件) 和 vite内置文件监控(够用)
     **connected**：与服务端建立连接后触发
     **update**：需要执行更新，该事件类型是HMR关键
     **custom**：执行自定义事件
     **full-reload**：重新刷新页面
     **prune**：清理事件
     **error**：错误事件
-6. 事件类型为**update**：
+7. 事件类型为**update**：
     1. 得到本次更新的所有可更新数据 updates
     2. 依次处理每个 updates，根据其模块类型，执行不同的处理方式
         - type = js-update，执行 fetchUpdate(...)
@@ -828,3 +830,6 @@ ensureEntryFromUrl: 通过 PluginContainer, 将url地址生成对应的[**url, r
 
 ## 八、vite build
 本质上就是采用rollup.js进行编译
+
+开启debug模式: DEBUG=xxx vite dev, 例如:
+DEBUG=vite:plugin-transform 
