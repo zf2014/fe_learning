@@ -30,6 +30,7 @@
     - [use() 读取 Context 的实现](#use-读取-context-的实现)
     - [与其他功能的交互](#与其他功能的交互)
 - [useOptimistic](#useoptimistic)
+- [useDeferredValue](#usedeferredvalue)
 - [React Compiler](#react-compiler)
 - [React 19.2 新特性](#react-192-新特性)
 - [服务端组件](#服务端组件)
@@ -51,6 +52,7 @@
 | **useFormStatus** | 访问父表单状态 | 🎨 无需 prop drilling |
 | **use() Hook** | 统一读取 Promise/Context | 🎯 简化数据获取 |
 | **useOptimistic** | 乐观 UI 更新 | ⚡ 提升用户体验 |
+| **useDeferredValue** | 延迟 UI 更新，保持响应 | 🎯 性能优化 |
 | **React Compiler (Forget)** | 自动记忆化编译器 | 🤖 零手动优化 |
 | **服务端组件 (稳定)** | Server Components | 🌐 减少客户端代码 |
 | **Server Actions** | 客户端调用服务端函数 | 🔗 无缝前后端通信 |
@@ -1577,6 +1579,454 @@ export function Post({ initialPost }: { initialPost: Post }) {
 ✅ **自动回滚** - 失败时自动恢复
 ✅ **简化代码** - 不需要手动管理临时状态
 ✅ **提升体验** - 减少"点击后等待"的感觉
+
+---
+
+## useDeferredValue
+
+### 概述
+
+`useDeferredValue` 是 React 19 的性能优化 Hook，用于延迟更新 UI 的某一部分，提升用户体验。
+
+**核心功能**:
+- ⚡ **延迟渲染**：将非紧急更新降级为低优先级
+- 🎯 **保持响应**：高优先级任务优先执行（如输入框）
+- 🔄 **可中断**：后台渲染可被高优先级任务中断
+- 🛡️ **集成 Suspense**：特殊的 Suspense 行为
+
+### 基础用法
+
+```tsx
+import { useState, useDeferredValue } from 'react';
+
+function SearchApp() {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  
+  return (
+    <>
+      <input 
+        value={query} 
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="搜索..."
+      />
+      <SearchResults query={deferredQuery} />
+    </>
+  );
+}
+```
+
+### 核心机制：后台渲染原理
+
+#### 1. "后台渲染"不是真正的多线程
+
+```
+❌ 错误理解：
+主线程 ──→ 渲染 UI
+后台线程 ──→ 执行 useDeferredValue
+
+✅ 正确理解：
+主线程 ──→ [高优先级任务] ──→ [低优先级任务] ──→ [高优先级任务]
+           (立即执行)      (时间切片)      (中断，立即执行)
+```
+
+#### 2. 双缓冲 Fiber 树
+
+React 维护两棵 Fiber 树：
+
+```typescript
+// React 内部（简化）
+interface FiberRoot {
+  current: Fiber | null;      // 当前屏幕上显示的树
+  finishedWork: Fiber | null; // 正在构建的树（workInProgress）
+}
+```
+
+**渲染流程**：
+1. 复制 current 树 → workInProgress 树
+2. 在 workInProgress 树上应用更新
+3. 完成 → workInProgress 成为新的 current
+
+#### 3. 时间切片机制
+
+```typescript
+// ReactFiberWorkLoop.js（简化）
+function workLoopConcurrent() {
+  while (workInProgress !== null && !shouldYield()) {
+    performUnitOfWork(workInProgress);
+  }
+}
+
+function shouldYield(): boolean {
+  // 检查当前时间片是否用完（通常 5ms）
+  return getCurrentTime() >= deadline;
+}
+```
+
+#### 4. Lane 优先级模型
+
+```typescript
+// Lane 优先级（从高到低）
+const SyncLane = 0b0000000000000000000000000000001;        // 同步（最高）
+const InputContinuousLane = 0b0000000000000000000000000000100;
+const DefaultLane = 0b0000000000000000000000000010000;      // 默认
+const TransitionLane = 0b0000000000000000000001000000000;   // Transition（低优先级）
+const IdleLane = 0b0100000000000000000000000000000;        // 空闲（最低）
+```
+
+### 完整执行流程
+
+```tsx
+function SearchApp() {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  
+  return (
+    <>
+      <input value={query} onChange={e => setQuery(e.target.value)} />
+      <Suspense fallback={<Loading />}>
+        <SearchResults query={deferredQuery} />
+      </Suspense>
+    </>
+  );
+}
+```
+
+**时间轴示例**：
+
+```
+t=0ms: 用户输入 "abc"
+    ↓
+高优先级更新：query = "abc"
+    ↓
+立即渲染：
+    - input 显示 "abc"
+    - deferredQuery = ""（旧值）
+    - SearchResults 使用空值
+    
+t=5ms: 时间切片结束
+    ↓
+低优先级后台更新开始：
+    - query = "abc"
+    - deferredQuery = "abc"（新值）
+    - SearchResults 挂起（use(fetchData("abc"))）
+    
+关键时刻：React 检查优先级
+    ↓
+判断逻辑：
+    ├─ 这是 useDeferredValue 触发的更新吗？→ 是
+    ├─ 更新优先级是 TransitionLane 吗？→ 是
+    └─ 应该显示 Suspense fallback 吗？→ ❌ 不显示！
+    ↓
+React 的决定：
+    - 放弃这次渲染
+    - 保持显示旧内容（deferredQuery = ""）
+    - 等待数据加载
+    
+t=1000ms: 数据 "abc" 加载完成
+    ↓
+提交到屏幕
+    ↓
+用户看到：输入框 "abc" + 列表显示 "abc" 的结果
+```
+
+### 与 Suspense 的特殊交互
+
+#### 官方文档明确说明
+
+> **`useDeferredValue` is integrated with `<Suspense>`.** 
+> If the background update caused by a new value suspends the UI, **the user will not see the fallback**. 
+> They will see the **old deferred value** until the data loads.
+
+#### 为什么这样设计？
+
+React 团队认为：**对于低优先级的更新（如搜索结果），显示 loading spinner 比显示旧内容更糟糕**。
+
+| 场景 | 显示 fallback | 显示旧内容 |
+|------|--------------|-----------|
+| **快速输入** | 频繁闪烁，视觉疲劳 | 平滑过渡，舒适 |
+| **慢速网络** | 一直看到 loading | 看到可用的旧结果 |
+| **内容跳变** | loading → 内容 → loading → 内容 | 旧内容 → 新内容 |
+
+#### 实际代码示例
+
+```tsx
+// ❌ 不使用 useDeferredValue
+function SearchApp() {
+  const [query, setQuery] = useState('');
+  
+  return (
+    <>
+      <input value={query} onChange={e => setQuery(e.target.value)} />
+      <Suspense fallback={<Loading />}>
+        <SearchResults query={query} />
+      </Suspense>
+    </>
+  );
+}
+// 问题：每次输入都看到 loading spinner
+
+// ✅ 使用 useDeferredValue
+function SearchApp() {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  
+  return (
+    <>
+      <input value={query} onChange={e => setQuery(e.target.value)} />
+      <Suspense fallback={<Loading />}>
+        <SearchResults query={deferredQuery} />
+      </Suspense>
+    </>
+  );
+}
+// 优势：看到旧结果而不是 loading spinner
+```
+
+### React 源码级别的实现
+
+#### 1. 优先级判断
+
+```typescript
+// ReactFiberWorkLoop.js（简化）
+function shouldShowSuspenseFallback(workInProgress: Fiber): boolean {
+  const current = workInProgress.alternate;
+  
+  // 如果组件之前已经显示了内容
+  if (current !== null && current.child !== null) {
+    // 检查更新优先级
+    const priority = getUpdatePriority(workInProgress);
+    
+    // 如果是 Transition 更新（低优先级）
+    if (isTransitionLane(priority)) {
+      return false;  // 不显示 fallback
+    }
+  }
+  
+  return true;  // 显示 fallback
+}
+```
+
+#### 2. useDeferredValue 的实现
+
+```typescript
+// ReactFiberHooks.js（简化）
+function updateDeferredValue<T>(value: T): T {
+  const hook = updateWorkInProgressHook();
+  const resolvedHook = hook.memoizedState;
+  
+  // 检查是否在 Transition 中
+  const prevTransition = getCurrentTransition();
+  
+  if (prevTransition !== null) {
+    // 在 Transition 中，使用旧值
+    return resolvedHook.baseState;
+  }
+  
+  // 不在 Transition 中，使用新值
+  hook.memoizedState = value;
+  return value;
+}
+```
+
+### 性能优化场景
+
+#### 场景 1：搜索输入
+
+```tsx
+function SearchPage() {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  
+  return (
+    <>
+      <input 
+        value={query} 
+        onChange={(e) => setQuery(e.target.value)}
+        className="border px-3 py-2 rounded"
+      />
+      
+      <Suspense fallback={<Spinner />}>
+        <SearchResults query={deferredQuery} />
+      </Suspense>
+    </>
+  );
+}
+```
+
+#### 场景 2：慢速列表渲染
+
+```tsx
+function SlowApp() {
+  const [text, setText] = useState('');
+  const deferredText = useDeferredValue(text);
+  
+  return (
+    <>
+      <input value={text} onChange={e => setText(e.target.value)} />
+      <SlowList text={deferredText} />
+    </>
+  );
+}
+
+const SlowList = memo(function SlowList({ text }) {
+  // 慢速渲染的列表
+  return (
+    <ul>
+      {Array.from({ length: 1000 }).map((_, i) => (
+        <li key={i}>{text}</li>
+      ))}
+    </ul>
+  );
+});
+```
+
+#### 场景 3：带视觉反馈
+
+```tsx
+function SearchApp() {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  const isStale = query !== deferredQuery;
+  
+  return (
+    <>
+      <input value={query} onChange={e => setQuery(e.target.value)} />
+      
+      <div style={{ opacity: isStale ? 0.5 : 1 }}>
+        {isStale && <small>更新中...</small>}
+        <Suspense fallback={<Spinner />}>
+          <SearchResults query={deferredQuery} />
+        </Suspense>
+      </div>
+    </>
+  );
+}
+```
+
+### 与 startTransition 的区别
+
+| 特性 | `useDeferredValue` | `startTransition` |
+|------|-------------------|-------------------|
+| **作用范围** | 单个值 | 整个更新块 |
+| **使用方式** | Hook 声明式 | 函数调用式 |
+| **优先级** | 自动降级为 Transition | 手动标记 |
+| **适用场景** | 延迟特定值 | 延迟整个状态更新 |
+
+```tsx
+// useDeferredValue - 延迟单个值
+const deferredQuery = useDeferredValue(query);
+
+// startTransition - 延迟整个更新
+startTransition(() => {
+  setQuery(newValue);  // 这个更新会被降级
+});
+```
+
+### 最佳实践
+
+#### ✅ 推荐用法
+
+```tsx
+// 1. 搜索场景
+function SearchApp() {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  
+  return (
+    <>
+      <input value={query} onChange={e => setQuery(e.target.value)} />
+      <Suspense fallback={<Spinner />}>
+        <SearchResults query={deferredQuery} />
+      </Suspense>
+    </>
+  );
+}
+
+// 2. 大量数据渲染
+function DataTable({ data }) {
+  const [filter, setFilter] = useState('');
+  const deferredFilter = useDeferredValue(filter);
+  
+  const filteredData = useMemo(
+    () => data.filter(item => item.name.includes(deferredFilter)),
+    [data, deferredFilter]
+  );
+  
+  return (
+    <>
+      <input value={filter} onChange={e => setFilter(e.target.value)} />
+      <Table data={filteredData} />
+    </>
+  );
+}
+
+// 3. 带视觉反馈
+function SearchWithFeedback() {
+  const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
+  const isStale = query !== deferredQuery;
+  
+  return (
+    <>
+      <input value={query} onChange={e => setQuery(e.target.value)} />
+      <div style={{ opacity: isStale ? 0.5 : 1 }}>
+        {isStale && <LoadingIndicator />}
+        <SearchResults query={deferredQuery} />
+      </div>
+    </>
+  );
+}
+```
+
+#### ❌ 避免的用法
+
+```tsx
+// 1. 不要在高优先级交互中使用
+function CriticalComponent() {
+  const [isOpen, setIsOpen] = useState(false);
+  // ❌ 错误：开关不需要延迟
+  const deferredIsOpen = useDeferredValue(isOpen);
+  
+  return <Modal isOpen={deferredIsOpen} />;
+}
+
+// 2. 不要用于关键状态
+function AuthForm() {
+  const [email, setEmail] = useState('');
+  // ❌ 错误：表单验证不应该延迟
+  const deferredEmail = useDeferredValue(email);
+  
+  return <Input value={deferredEmail} onChange={setEmail} />;
+}
+
+// 3. 频繁创建的对象
+function BadExample() {
+  const [count, setCount] = useState(0);
+  // ❌ 错误：每次渲染都创建新对象
+  const deferredValue = useDeferredValue({ count, date: new Date() });
+  
+  return <Display data={deferredValue} />;
+}
+```
+
+### 限制和注意事项
+
+⚠️ **注意事项**：
+- 当更新在 Transition 中时，`useDeferredValue` 总是返回新值
+- 传递的值应该是原始值或在渲染外创建的对象
+- 后台渲染是可中断的，高优先级更新会重新开始
+- 后台渲染不触发 Effects 直到提交到屏幕
+- 没有固定的延迟，React 会尽快开始后台渲染
+
+### 总结
+
+| 问题 | 答案 |
+|------|------|
+| `useDeferredValue` 的核心机制是什么？ | 优先级调度 + 时间切片 + 双缓冲树 |
+| 为什么不显示 Suspense fallback？ | 设计决策：保持 UI 连续性，避免闪烁 |
+| 和 `startTransition` 的区别？ | `useDeferredValue` 延迟单个值，`startTransition` 延迟整个更新 |
+| 适用于什么场景？ | 搜索、慢速列表、非紧急 UI 更新 |
 
 ---
 

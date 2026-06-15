@@ -4930,30 +4930,224 @@ fiber.memoizedState
 
 **Hook 会按调用顺序依次添加到链表中**。
 
-#### 6.1.3 Hook 数据结构
+#### 6.1.3 Hook 数据结构——每个字段的底层含义
 
 ```javascript
-// 每个 Hook 的基本结构
 const hook: Hook = {
-  memoizedState: null,  // 缓存的状态值（因 Hook 类型而异）
-  baseState: null,      // 基础状态
-  baseQueue: null,      // 基础更新队列
-  queue: null,          // 更新队列（存储 setState 的更新）
-  next: null,           // 指向下一个 Hook
+  memoizedState: null,  // "状态缓存"——因 Hook 类型而异（见下表）
+  baseState: null,      // "基础状态"——最后一次完整应用的 state
+  baseQueue: null,      // "被跳过的更新"——因优先级不足未处理的 Update 链表
+  queue: null,          // "更新队列"——所有待处理的 Update 环形链表
+  next: null,           // 指向下一个 Hook（形成链表的指针）
 };
 ```
 
-**不同类型的 Hook 如何存储 `memoizedState`：**
+##### 字段详解
 
-| Hook | `memoizedState` 存储内容 |
-|------|-------------------------|
-| `useState` | 当前状态值（如 `0`、`"hello"`） |
-| `useEffect` | Effect 对象（`{create, destroy, deps, ...}`） |
-| `useRef` | `{current: initialValue}` |
-| `useMemo` | `[memoizedValue, nextDeps]` |
-| `useCallback` | `[callback, nextDeps]` |
-| `useReducer` | 当前 reducer 状态 |
-| `useContext` | 不存储在链表中（通过 Fiber 依赖追踪） |
+###### `memoizedState`——状态缓存
+
+React 中最常被误解的字段。不同类型的 Hook 在 `memoizedState` 中存储**完全不同的数据结构**：
+
+| Hook | `memoizedState` 存储内容 | 解释 |
+|------|-------------------------|------|
+| `useState` | `0` / `"hello"` / `true` 等具体值 | 直接存当前状态值 |
+| `useReducer` | 同上（当前 state） | useState = useReducer 的特化 |
+| `useEffect` | `{ tag, create, destroy, deps, next, ... }` | Effect 对象（参与 Effect 链表） |
+| `useLayoutEffect` | 同上（Effect 对象） | 同 useEffect，仅 tag 不同 |
+| `useInsertionEffect` | 同上（Effect 对象） | 同 useEffect，仅 tag 不同 |
+| `useRef` | `{ current: initialValue }` | 一个普通对象，值可变 |
+| `useMemo` | `[memoizedValue, nextDeps]` | 数组：[缓存值, 依赖数组] |
+| `useCallback` | `[callback, nextDeps]` | 数组：[回调函数, 依赖数组] |
+| `useImperativeHandle` | `{ current: ref }` 或 `[ref, create, deps]` | ref 对象或含依赖 |
+| `useTransition` (Hook#0) | `boolean`（isPending 状态） | 同 useState 存储 |
+| `useTransition` (Hook#1) | `function`（startTransition） | **不参与下一次比较**，仅用于保留引用 |
+| `useDeferredValue` | 当前延迟值 / 前一个值 | 内部会与最新值比较 |
+| `useSyncExternalStore` | snapshot 值 | 订阅外部 store 的快照 |
+| `useContext` | **不存储** | 不占用 Hook 链表槽位 |
+
+**区分 `useState` 与 `useEffect` 的 `memoizedState` 差异：**
+
+```javascript
+// useState 的 memoizedState:
+// 直接存值
+hook.memoizedState = 42;
+hook.memoizedState = "hello";
+hook.memoizedState = { items: [], loading: true };
+
+// useEffect 的 memoizedState:
+// 存 Effect 对象（包含完整生命周期所需信息）
+hook.memoizedState = {
+  tag: HookPassive | HookHasEffect,  // 标志位
+  create: () => { /* effect 函数 */ },
+  destroy: () => { /* 清理函数 */ },
+  deps: [count, name],               // 依赖数组
+  next: null,                          // 指向下一个 Effect
+};
+```
+
+###### `baseState`——被跳过的更新所用的"基准值"
+
+只有 `useState` 和 `useReducer` 使用此字段，用于处理**优先级不足的更新**：
+
+```javascript
+// 场景：用户快速输入，高优先级更新打断了低优先级 Transition 更新
+
+// 初始状态：count = 0
+hook.baseState = 0;  // 基准值 = 最后一次完整应用的 state
+hook.memoizedState = 0;
+
+// Transition 更新：setCount(100)（TransitionLane，低优先级）
+// 但来了一个 Sync 更新：setCount(1)（SyncLane，高优先级）
+//
+// 只处理高优先级更新时：
+//   hook.baseState = 0       ← 不变！基准值仍为 0
+//   hook.memoizedState = 1   ← 仅计算了高优先级更新
+//
+// 下次处理低优先级更新时：
+//   从 baseState = 0 开始，重新应用所有 update（包括上次跳过的）
+//   → 计算得出完整的状态
+```
+
+**`baseState` 的作用：** 保证低优先级更新被恢复后，从**正确的历史起点**重新计算，不会丢失中间状态。
+
+###### `baseQueue`——被跳过的 Update 链表
+
+与 `baseState` 配对使用，存储因优先级不足而**未处理**的 Update 节点：
+
+```javascript
+// 排了 3 个 update：A（SyncLane）、B（TransitionLane）、C（SyncLane）
+//
+// renderLanes = SyncLane 时：
+//   baseQueue = [B]            ← B 被跳过，保留
+//   memoizedState = A + C 的结果 ← 只应用了优先级匹配的
+//
+// 下次 renderLanes = TransitionLane 时：
+//   baseQueue 中的 B 被取出，从 baseState 重新计算
+```
+
+###### `queue`——Update 环形链表（setState 的底层结构）
+
+这是 `useState` / `useReducer` 的核心数据容器。它不是普通链表，而是一个**环形链表**：
+
+```javascript
+const queue: UpdateQueue = {
+  pending: null,            // ★ 最新的 Update 节点（环形链表尾部）
+  dispatch: null,            // dispatchSetState 或 dispatchReducerAction
+  lastRenderedReducer: null, // 最后一次渲染时使用的 reducer
+  lastRenderedState: null,   // 最后一次渲染时计算出的 state
+};
+
+// 每个 Update 节点的结构：
+const update: Update = {
+  lane: Lane,                // 该 update 的优先级（决定了何时执行）
+  action: any,               // setState 的值或 reducer action
+  hasEagerState: boolean,    // 是否已执行"提前计算"
+  eagerState: any,           // 提前计算的结果（优化用）
+  next: Update | null,       // 指向下一个 Update
+};
+```
+
+**环形链表工作原理**：
+
+```javascript
+// dispatchSetState 创建 Update 对象，并添加到 queue.pending 的环中：
+//
+// 假设连续调用了 3 次 setState：
+//   setState(a) → 创建 Update_A → queue.pending = Update_A
+//                   Update_A.next = Update_A ← 指向自己（单节点环）
+//
+//   setState(b) → 创建 Update_B → 插入环中
+//                   Update_A.next = Update_B
+//                   Update_B.next = Update_A
+//                   queue.pending = Update_B（最新）
+//
+//   setState(c) → 创建 Update_C
+//                   Update_A.next = Update_B
+//                   Update_B.next = Update_C
+//                   Update_C.next = Update_A
+//                   queue.pending = Update_C
+//
+// 环形结构的好处：
+//   1. queue.pending.next → 从头开始遍历
+//   2. queue.pending → 最新节点（追加时的入口点）
+//   3. 不需要头尾两个指针
+```
+
+```
+环形链表图示：
+
+   queue.pending = Update_C
+        │
+        ▼
+   ┌── Update_A ◀── Update_C
+   │       │            ▲
+   │       ▼            │
+   │   Update_B ────────┘
+   │       │
+   └─── 遍历时从 Update_C.next (Update_A) 开始
+```
+
+###### `next`——Hook 链表指针
+
+指向下一个 Hook 对象。所有 Hook 通过单项链表串起来：
+
+```javascript
+// fiber.memoizedState
+//   → Hook1(#useState).next
+//   → Hook2(#useEffect).next
+//   → Hook3(#useRef).next
+//   → Hook4(#useMemo).next
+//   → null
+
+// mountWorkInProgressHook 的核心逻辑：
+function mountWorkInProgressHook() {
+  const hook = {
+    memoizedState: null,
+    baseState: null,
+    baseQueue: null,
+    queue: null,
+    next: null,
+  };
+
+  if (workInProgressHook === null) {
+    // 第一个 Hook → 作为 fiber.memoizedState 的头节点
+    firstWorkInProgressHook = workInProgressHook = hook;
+    currentlyRenderingFiber.memoizedState = hook;
+  } else {
+    // 后续 Hook → 追加到链表末尾
+    workInProgressHook.next = hook;
+    workInProgressHook = hook;
+  }
+  return workInProgressHook;
+}
+```
+
+---
+
+##### Hook 字段使用对照表——哪个 Hook 用哪些字段
+
+| Hook | `memoizedState` | `baseState` | `baseQueue` | `queue` | `next` |
+|------|:---:|:---:|:---:|:---:|:---:|
+| `useState` | ✅ 当前值 | ✅ 基准值 | ✅ 跳过更新 | ✅ Update 环 | ✅ 链表指针 |
+| `useReducer` | ✅ 当前值 | ✅ 基准值 | ✅ 跳过更新 | ✅ Update 环 | ✅ 链表指针 |
+| `useEffect` | ✅ Effect 对象 | ❌ | ❌ | ❌ | ✅ |
+| `useLayoutEffect` | ✅ Effect 对象 | ❌ | ❌ | ❌ | ✅ |
+| `useInsertionEffect` | ✅ Effect 对象 | ❌ | ❌ | ❌ | ✅ |
+| `useRef` | ✅ `{current}` | ❌ | ❌ | ❌ | ✅ |
+| `useMemo` | ✅ `[value, deps]` | ❌ | ❌ | ❌ | ✅ |
+| `useCallback` | ✅ `[fn, deps]` | ❌ | ❌ | ❌ | ✅ |
+| `useImperativeHandle` | ✅ ref 相关 | ❌ | ❌ | ❌ | ✅ |
+| `useTransition` (H0) | ✅ boolean | ✅ | ✅ | ✅ | ✅ |
+| `useTransition` (H1) | ✅ function | ❌ | ❌ | ❌ | ✅ |
+| `useDeferredValue` | ✅ 延迟值 | ❌ | ❌ | ❌ | ✅ |
+| `useSyncExternalStore` | ✅ snapshot | ❌ | ❌ | ❌ | ✅ |
+| `useContext` | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+> **规律**：只有 `useState` 和 `useReducer` 使用 `baseState`、`baseQueue`、`queue` 这三个字段。其他 Hook 只用 `memoizedState` + `next`。
+> 
+> **原因**：只有 `useState` / `useReducer` 有"更新队列"（setState 可以调多次）和"优先级跳过"（不同 update 可能在不同渲染中分批执行）的需求。
+>
+> **`useContext` 特殊**：它不经过 Hook 链表，通过 `readContext` 直接从 Fiber 的依赖追踪系统读取 Context 值。
 
 ---
 
@@ -8532,6 +8726,200 @@ function useUser(userId) {
 ```
 
 ---
+
+#### 6.13.4 深入：自定义 Hooks 能操作 Hook 属性吗？
+
+> 这是一个触及 React Hooks 本质的问题：
+> "自定义 Hook 内部能否直接访问/修改 `fiber.memoizedState` 上的 Hook 对象字段？"
+> "能不能像 `useState` 那样创建自己的 `queue` 和 `baseQueue` 机制？"
+
+**简短答案**：**不能。** 自定义 Hook 没有自己独立的 Hook 对象，它只是调用内置 Hook 的"语法糖"。
+
+##### 1. 自定义 Hook 不创建 Hook 对象
+
+```javascript
+function useCustomHook() {
+  // 下面的 useState 和 useEffect 会创建真实的 Hook 对象
+  // 但这些 Hook 对象属于"调用 useCustomHook 的组件"的 fiber
+  const [state, setState] = useState(0);
+  useEffect(() => { /* ... */ }, [state]);
+  return state;
+}
+
+// 在 MyComponent 中调用：
+function MyComponent() {
+  useCustomHook();  // ← Hook#1: useState, Hook#2: useEffect
+  const [count, setCount] = useState(0);  // ← Hook#3: useState
+}
+```
+
+**运行时的真实 Hook 链表**：
+
+```
+fiber.memoizedState
+  │
+  ▼
+┌──────────────────────────────┐
+│ Hook #1 (memoizedState: 0)  │ ← useCustomHook 内的 useState(0)
+│   next ──────────────────┐  │
+└──────────────────────────┘  │
+                              ▼
+┌──────────────────────────────┐
+│ Hook #2 (memoizedState:     │ ← useCustomHook 内的 useEffect
+│          EffectObj)          │
+│   next ──────────────────┐  │
+└──────────────────────────┘  │
+                              ▼
+┌──────────────────────────────┐
+│ Hook #3 (memoizedState: 0)  │ ← MyComponent 自身的 useState(0)
+│   next → null               │
+└──────────────────────────────┘
+```
+
+**关键事实**：Hook 链表中**没有"useCustomHook"对应的节点**。不存在一个"自定义 Hook 对象"。
+
+##### 2. 自定义 Hook 无法直接访问 Hook 字段
+
+```javascript
+// ❌ 以下操作在自定义 Hook 中做不到：
+
+function useCustomHook() {
+  // 1. ❌ 无法直接读取当前组件的 Fiber
+  //    const fiber = getCurrentFiber(); // React 内部函数，不暴露
+
+  // 2. ❌ 无法直接操作 Hook 对象
+  //    const hook = currentlyRenderingFiber.memoizedState;
+  //    hook.memoizedState = 'newValue'; // 这是 React 内部的工作方式
+  //    hook.queue = newQueue;           // 只有内置 Hook 能操作 queue
+
+  // 3. ❌ 无法创建自己的 Hook 类型
+  //    const mySpecialHook = {          // React 不识别自定义 Hook 类型
+  //      memoizedState: ...,
+  //      baseState: ...,
+  //      baseQueue: ...,
+  //    };
+
+  // 4. ✅ 只能通过内置 Hook 间接实现
+  const [state, dispatch] = useReducer(myReducer, initialState);
+  const ref = useRef(null);
+  // ...
+}
+```
+
+##### 3. 为什么 React 禁止自定义 Hook 操作 Hook 字段？
+
+| 原因 | 解释 |
+|------|------|
+| **封装性** | 自定义 Hook 是一个**函数组合工具**，不是 Fiber 机制的扩展点。React 的架构目标是把"副作用管理"和"状态管理"封装在内置 Hook 中 |
+| **稳定性** | Hook 字段（`memoizedState`、`queue` 等）的内部实现可能随版本变化。如果允许自定义 Hook 直接操作，升级 React 就会破坏大量代码 |
+| **类型安全** | 不同 Hook 的 `memoizedState` 数据类型完全不同（值 / Effect 对象 / 数组 / 对象），开放直接操作会导致类型错误 |
+| **并发安全** | `queue` 和 `baseQueue` 的原子性操作需要配合 Lane 优先级和 Scheduler，这是 Reacter 内部逻辑，不对外开放 |
+
+##### 4. 自定义 Hook 如何"正确地"实现类似能力？
+
+虽然不能直接操作 Hook 字段，但通过**组合内置 Hook** 可以实现任何状态管理需求：
+
+| 你需要的能力 | 正确的做法 | 对应的内置 Hook |
+|-------------|-----------|----------------|
+| 持久化一个值 | 用 `useRef` 存储可变对象 | `useRef` |
+| 管理状态更新 | 用 `useState` / `useReducer` | `useState`, `useReducer` |
+| 跳过某些更新 | 用 `useRef` 手动控制 + `useReducer` 的条件 dispatch | `useRef` + `useReducer` |
+| 模拟挂载/卸载 | 用 `useEffect` 的清理函数 | `useEffect` |
+| 缓存计算结果 | 用 `useMemo` | `useMemo` |
+| 保持回调引用稳定 | 用 `useCallback` | `useCallback` |
+| 延迟更新 | 用 `useDeferredValue` 或 `useTransition` | `useDeferredValue` |
+| 订阅外部数据源 | 用 `useSyncExternalStore` | `useSyncExternalStore` |
+| 跨组件通信 | 用 `useContext` | `useContext` |
+
+**实际示例：实现一个带优先级的更新队列（不用自己写 queue）**
+
+```javascript
+// 你可能想创建一个"自己的 queue"来管理多个更新
+// ❌ 错误做法：想直接操作 Hook 字段
+function useMyQueue() {
+  // 这行不通——没有 React 内部机制支持自定义 queue
+  const hook = getCurrentHook(); // ❌ 不存在
+  hook.queue = { pending: null };
+}
+
+// ✅ 正确做法：用 useReducer 组合实现
+function usePriorityQueue(initialState) {
+  const [state, dispatch] = useReducer((state, action) => {
+    // 在 reducer 中处理你的"队列"逻辑
+    switch (action.type) {
+      case 'ENQUEUE':
+        return { ...state, items: [...state.items, action.payload] };
+      case 'DEQUEUE':
+        return { ...state, items: state.items.slice(1) };
+      default:
+        return state;
+    }
+  }, initialState);
+
+  // 用 useRef 保存队列的内部结构
+  const queueRef = useRef([]);
+
+  // 借用 useEffect 实现队列的副作用处理
+  useEffect(() => {
+    if (queueRef.current.length > 0) {
+      // 处理队列中的任务
+    }
+  }, [state]);
+
+  return [state, dispatch];
+}
+```
+
+##### 5. 如果你真的需要"自定义 Hook 类型"——那是什么？
+
+虽然普通代码不能，但 React 生态系统中确实有两种"特殊"方式可以**扩展 Hook 行为**：
+
+| 方式 | 说明 | 例子 |
+|------|------|------|
+| **React 内部自定义 Hook** | React 团队在源码中直接创建新 Hook 类型 | `useDeferredValue` 在内部就是一个特殊的 Hook，有自己专门的 `mountDeferredValue` / `updateDeferredValue` 实现 |
+| **第三方库的 Ref 模式** | 通过 `useRef` + 自定义对象包装 | `react-spring`、`react-use` 等库把所有状态存到 `useRef` 的 `current` 中 |
+
+```javascript
+// 第三方库的实际模式：用 useRef 存储"自定义 Hook 状态"
+function useSpring(config) {
+  // ★ 状态存在 useRef 中，而不是创建新的 Hook 类型
+  const springRef = useRef({
+    value: config.from,
+    velocity: 0,
+    animation: null,
+  });
+
+  // 用 useState 触发重新渲染
+  const [, forceUpdate] = useState(0);
+
+  // 修改 ref 中的值 + 强制更新
+  function setValue(newValue) {
+    springRef.current.value = newValue;
+    forceUpdate(n => n + 1);
+  }
+
+  return [springRef.current.value, setValue];
+}
+```
+
+**原理**：`useRef` 的 `memoizedState` 存储的是一个 `{ current: ... }` 对象。第三方库充分利用了这个对象的**可变性**——在 `ref.current` 中维护自己复杂的数据结构，只在需要触发渲染时才调用 `useState` 的 dispatch。
+
+##### 6. 总结
+
+```
+问：自定义 Hook 能否维护组件级的 Hook 属性？
+答：❌ 不能直接操作 fiber.memoizedState / queue / baseState / baseQueue
+    ✅ 但可以通过组合内置 Hook 实现相同的效果
+
+真相：自定义 Hook 只是"按顺序调用内置 Hook 的函数"
+      它在 Hook 链表中没有自己的节点
+      它不能创建新的 Hook 字段或 Hook 类型
+      它的所有能力都来自对 useState / useEffect / useRef 等的调用
+
+核心原则：自定义 Hook 是"逻辑复用"工具，不是"Fiber 扩展"工具。
+         React 的"扩展点"设计在组件和 Hook 层面，
+         不在 Fiber 和 Hook 数据结构层面。
+```
 
 ### 6.14 Hooks 与 React 编译器（React Compiler）
 
