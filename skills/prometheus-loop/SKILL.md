@@ -1,6 +1,6 @@
 ---
 name: prometheus-loop
-description: Long-term goal-driven autonomous task execution loop. Orchestrates Prometheus (planning) → Sisyphus (execution) → Momus (verification) → Router (decision) in an automatic cycle. Use when setting multi-step goals, running complex projects, or enabling autonomous AI-driven development.
+description: Use when setting multi-step goals, running complex projects, or enabling autonomous AI-driven development that requires iterative plan-execute-verify cycles.
 ---
 
 # Prometheus Loop Skill
@@ -9,30 +9,19 @@ description: Long-term goal-driven autonomous task execution loop. Orchestrates 
 
 The **Prometheus Loop** is a self-driving system that takes a high-level goal and autonomously cycles through planning, execution, verification, and decision-making until the goal is completed.
 
-**Core philosophy**: You don't prompt agents anymore — you design loops that prompt your agents.
+**Core principle**: You don't prompt agents anymore — you design loops that prompt your agents.
 
-**How it works**:
-
+**Flow**:
 ```
 User: "/prometheus-loop 实现博客系统，CRUD+评论+标签"
-
-→ Loop begins (fully automatic):
-  1. Parse Goal → Register in Goal Registry
-  2. Plan → Prometheus creates a Plan
-  3. Review → Momus verifies the Plan
-  4. Execute → Automatically run the Plan
-  5. Verify → Momus checks results
-  6. Route → Decide: next subgoal? retry? replan? escalate?
-  7. Continue → Loop back to step 2 until ALL subgoals complete
-
-→ Output: Completion declaration
+→ Loop: Parse Goal → Plan → Review → Execute → Verify → Route →
+  Loop back to Plan until all subgoals done → Complete
 ```
 
-**Dependencies**:
-- `goal-registry` skill — for Goal Registry CRUD operations
-- Prometheus (built-in) — for strategic planning
-- Sisyphus (`/start-work` built-in) — for plan execution
-- Momus (built-in) — for adversarial verification
+**Required agents** (all built-in):
+- Prometheus — strategic planning
+- Sisyphus (`/start-work`) — plan execution
+- Momus — adversarial verification
 
 ---
 
@@ -47,6 +36,14 @@ Use this skill when you need to:
 
 **Trigger format**: `/prometheus-loop {goal description}` or `启动 Prometheus Loop: {goal description}`
 
+### When NOT to Use
+
+- **Simple single-step tasks** — use a regular `/writing-plans` workflow instead. The Loop's overhead (parse → plan → review → execute → verify → route) is wasteful for tasks that fit one plan.
+- **Exploratory or research work** — use `/brainstorming` or `/grill-me` first. The Loop requires a defined goal; ambiguous objectives will cause repeated REQUIREMENT_CHANGE escalations.
+- **Operational one-offs** (config change, single deploy, quick fix) — no need for the iterative loop. Just execute directly.
+- **Pull request review / integration verification** — use `/review-work` instead. The Loop is designed for building, not reviewing.
+- **User wants manual checkpoints** — the Loop is autonomous by design. If you need to approve every stage, you're fighting the architecture.
+
 ---
 
 ## The 7-Stage Loop Flow
@@ -57,20 +54,20 @@ Use this skill when you need to:
 
 **Steps**:
 1. Parse the user's goal description (title, optional details)
-2. Call `goal-registry:init` to create a new goal in `.omo/goals/active/{goalId}.json`
-3. If the user mentioned sub-steps, add them via `goal-registry:add-subgoal`
+2. Call `goals:init` (see [`commands.md`](./commands.md)) to create a new goal in `.omo/goals/active/{goalId}.json`
+3. If the user mentioned sub-steps, add them via `goals:add-subgoal`
 4. If sub-steps have dependencies, set up `blockedBy` chains
 5. Report: goal registered with N subgoals
 
 **Example**:
 ```
 User: "/prometheus-loop 实现博客系统，需要数据层、API 层、前端页面"
-→ goal-registry:init "实现博客系统" "数据层 + API 层 + 前端页面"
-→ goal-registry:add-subgoal blog-system "数据层" ""
-→ goal-registry:add-subgoal blog-system "API 层" ""
-→ goal-registry:add-subgoal blog-system "前端页面" ""
-→ goal-registry:update-subgoal blog-system sg-002 blockedBy '["sg-001"]'
-→ goal-registry:update-subgoal blog-system sg-003 blockedBy '["sg-002"]'
+→ goals:init "实现博客系统" "数据层 + API 层 + 前端页面"
+→ goals:add-subgoal blog-system "数据层" ""
+→ goals:add-subgoal blog-system "API 层" ""
+→ goals:add-subgoal blog-system "前端页面" ""
+→ goals:update-subgoal blog-system sg-002 blockedBy '["sg-001"]'
+→ goals:update-subgoal blog-system sg-003 blockedBy '["sg-002"]'
 ```
 
 ---
@@ -80,11 +77,11 @@ User: "/prometheus-loop 实现博客系统，需要数据层、API 层、前端�
 **What happens**: Prometheus creates a detailed Plan for the current subgoal.
 
 **Steps**:
-1. Read the current subgoal via `goal-registry:next {goalId}`
+1. Read the current subgoal via `goals:next {goalId}`
 2. If no subgoal is ready, report: goal is blocked or complete
 3. Present the subgoal to Prometheus for planning
 4. Prometheus produces a Plan → saved to `.omo/plans/{subgoalId}.md`
-5. Update subgoal via `goal-registry:update-subgoal {goalId} {subgoalId} planRef ".omo/plans/{subgoalId}.md"`
+5. Update subgoal via `goals:update-subgoal {goalId} {subgoalId} planRef ".omo/plans/{subgoalId}.md"`
 
 ---
 
@@ -241,7 +238,7 @@ When escalation is needed:
 **What happens**: All subgoals are done — output completion declaration.
 
 **Steps**:
-1. Call `goal-registry:archive {goalId}` to move to completed
+1. Call `goals:archive {goalId}` to move to completed
 2. Generate a **completion report** including:
    - Goal title and description
    - Total subgoals and how many attempts each took
@@ -347,15 +344,15 @@ if totalFailures >= globalCircuitBreakerThreshold:
 
 ## Monitoring and Resumption
 
-### Checking Loop State During Execution
+### Checking Loop State
 
 To check progress while the Loop is running (or after a session ends):
 
 ```
-1. goal-registry:list
+1. goals:list
    → See all goals, their status, and progress
 
-2. goal-registry:get {goalId}
+2. goals:get {goalId}
    → See full goal details, current subgoal, attempt count
 
 3. Check .omo/goals/index.json
@@ -369,10 +366,10 @@ To check progress while the Loop is running (or after a session ends):
 
 When resuming work after a session ends:
 
-1. Run `goal-registry:list` to see all goals
-2. For active goals, run `goal-registry:get {goalId}` to see current state
+1. Run `goals:list` to see all goals
+2. For active goals, run `goals:get {goalId}` to see current state
 3. Check `loopContext.sessionCount` and `loopContext.continuationToken`
-4. Run `goal-registry:next {goalId}` to find the next subgoal
+4. Run `goals:next {goalId}` to find the next subgoal
 5. Resume from Stage 2 (Planning Phase)
 6. Update `loopContext.sessionCount += 1`
 
@@ -380,12 +377,12 @@ When resuming work after a session ends:
 
 ```
 User: "继续之前的任务"
-→ goal-registry:list
+→ goals:list
 → Active Goals: blog-system (in_progress — 1/3 subgoals)
-→ goal-registry:get blog-system
+→ goals:get blog-system
   → currentSubgoalIndex: 1
   → sg-002: in_progress, attempts: 2, lastError: "缺少鉴权"
-→ goal-registry:next blog-system
+→ goals:next blog-system
   → sg-002 ready (sg-001 completed, dependency unblocked)
 → Resume from Stage 2: Replan sg-002 with feedback about missing auth
 ```
@@ -396,10 +393,26 @@ User: "继续之前的任务"
 
 | Scenario | Detection | Response |
 |----------|-----------|----------|
-| Goal file missing | File read fails | Initialize new goal via goal-registry:init |
+| Goal file missing | File read fails | Initialize new goal via goals:init |
 | Index.json corrupted | JSON parse error | Rebuild index from existing goal files |
 | Plan file not found | File check fails | Re-plan: go to Stage 2 |
 | Momus unavailable | Agent call fails | Skip verification, proceed with caution |
 | Execution tool fails | Exit code non-zero | Stage 5 verification will catch it |
-| Loop interrupted mid-execution | Session ends | Session resumption (see above) |
+| Loop interrupted mid-execution | Session ends | Session resumption (see Monitoring and Resumption) |
 | Goal has no subgoals | goals:next returns null | Set successCriteria, run as single task |
+
+---
+
+## Common Mistakes
+
+- **Subgoal too large**: Each subgoal should map to 1-3 files / one Plan. If a subgoal needs multiple Plans, split it into finer subgoals.
+- **Missing dependency chain**: Subgoals without `blockedBy` may execute in parallel and fail due to missing prerequisites. Always model dependencies upfront in Stage 1.
+- **Vague goal description**: The initial description drives subgoal decomposition. Vague input → vague subgoals → Plan_ISSUE failures. Be specific: `"博客系统含文章 CRUD + 评论区 + 标签管理"` not `"做个博客"`.
+- **Manual intervention expectation**: The Loop is autonomous. If you need to approve every stage, you're using the wrong tool. The Loop handles retries, replans, and escalations automatically.
+- **Ignoring Momus rejection details**: When Momus rejects a Plan (Stage 3) or Result (Stage 5), the Verdict details tell you exactly what to fix. Reading them carefully saves retry cycles.
+
+---
+
+## Internal Commands Reference
+
+The 8 goal CRUD commands (`goals:init`, `goals:list`, `goals:get`, `goals:update`, `goals:add-subgoal`, `goals:update-subgoal`, `goals:archive`, `goals:next`) are documented in detail in [`commands.md`](./commands.md), along with the Goal JSON Schema and Storage Layout.

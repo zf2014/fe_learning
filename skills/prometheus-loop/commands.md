@@ -1,38 +1,13 @@
 ---
-name: goal-registry
-description: Goal Registry CRUD operations for Prometheus Loop. Manages long-term goals, subgoals, and dependency chains in .omo/goals/. Use when creating, updating, querying, or archiving goals for the Prometheus Loop autonomous task execution system.
+name: prometheus-loop-commands
+description: Supporting reference for prometheus-loop skill — 8 goal CRUD commands, JSON schema, and storage layout.
 ---
 
-# Goal Registry Skill
+# Internal Commands Reference
 
-## Overview
+The 7-stage Prometheus Loop references these commands by name. Each command maps to operations against the `.omo/goals/` directory on disk.
 
-This skill manages the **Goal Registry** — the persistent data layer for Prometheus Loop. Goals are stored as JSON files in `.omo/goals/`. Each goal contains a list of subgoals with dependency chains, execution state, and cross-session context.
-
-**Data location**: `.omo/goals/`
-**Index file**: `.omo/goals/index.json`
-**Active goals**: `.omo/goals/active/{goalId}.json`
-**Archived goals**: `.omo/goals/completed/{goalId}.json`
-
----
-
-## Trigger Patterns
-
-Use this skill when you need to:
-- Initialize a new long-term goal for Prometheus Loop
-- List all goals and their current progress
-- Check the status of a specific goal
-- Update goal or subgoal state after execution
-- Add a new subgoal to an existing goal
-- Find the next subgoal ready to execute
-- Archive a completed goal
-- Debug goal state or dependency chains
-
----
-
-## Commands
-
-### `goals:init — Initialize a new goal`
+## `goals:init — Initialize a new goal`
 
 Initialize a new goal and save it to `.omo/goals/active/{goalId}.json`.
 
@@ -60,7 +35,7 @@ Initialize a new goal and save it to `.omo/goals/active/{goalId}.json`.
 
 ---
 
-### `goals:list — List all goals`
+## `goals:list — List all goals`
 
 List all goals from the index with their status and progress.
 
@@ -87,7 +62,7 @@ Completed Goals:
 
 ---
 
-### `goals:get {goalId} — Get a specific goal`
+## `goals:get {goalId} — Get a specific goal`
 
 Read and display the full goal JSON.
 
@@ -100,7 +75,7 @@ Read and display the full goal JSON.
 
 ---
 
-### `goals:update {goalId} {field} {value} — Update a goal field`
+## `goals:update {goalId} {field} {value} — Update a goal field`
 
 Update a top-level field in the goal JSON.
 
@@ -123,7 +98,7 @@ Update a top-level field in the goal JSON.
 
 ---
 
-### `goals:add-subgoal {goalId} {title} {planRef} — Add a subgoal`
+## `goals:add-subgoal {goalId} {title} {planRef} — Add a subgoal`
 
 Add a new subgoal to an existing goal.
 
@@ -150,7 +125,7 @@ Add a new subgoal to an existing goal.
 
 ---
 
-### `goals:update-subgoal {goalId} {subgoalId} {field} {value} — Update subgoal status`
+## `goals:update-subgoal {goalId} {subgoalId} {field} {value} — Update subgoal status`
 
 Update a specific subgoal's field after execution.
 
@@ -173,7 +148,7 @@ Update a specific subgoal's field after execution.
 
 ---
 
-### `goals:archive {goalId} — Archive a completed goal`
+## `goals:archive {goalId} — Archive a completed goal`
 
 Move a goal from active to completed.
 
@@ -188,7 +163,7 @@ Move a goal from active to completed.
 
 ---
 
-### `goals:next {goalId} — Get next pending subgoal`
+## `goals:next {goalId} — Get next pending subgoal`
 
 Find the next subgoal that is ready to execute, respecting blockedBy dependencies.
 
@@ -273,41 +248,3 @@ Complete JSON schema for a goal file (`.omo/goals/active/{goalId}.json`):
       "completed": ["init-setup"]
     }
 ```
-
----
-
-## Dependency Resolution
-
-The `goals:next` command resolves dependencies using these rules:
-
-1. A subgoal is **ready** when:
-   - Its `status` is `"pending"`
-   - ALL subgoals in its `blockedBy` array have `status: "completed"`
-
-2. If multiple subgoals are ready:
-   - Pick the one with the lowest index (sg-001 before sg-002)
-
-3. If no subgoals are ready:
-   - If all subgoals are completed → goal is done
-   - If pending subgoals exist but all blocked → goal is blocked
-   - Return null with explanation
-
-**Example dependency chain**:
-```
-sg-001: "数据层"           blockedBy: []        → ready immediately
-sg-002: "API 层"           blockedBy: ["sg-001"] → ready after sg-001 completes
-sg-003: "前端页面"         blockedBy: ["sg-002"] → ready after sg-002 completes
-```
-
----
-
-## Cross-Session Continuation
-
-When resuming work after a session ends:
-
-1. Read `goals:list` to see all goals
-2. For the active goal, read `goals:get {goalId}` to see current state
-3. Run `goals:next {goalId}` to find the next subgoal to execute
-4. Resume the Prometheus Loop from the next subgoal
-
-The `loopContext.continuationToken` can be used to reference the previous session for context recovery.

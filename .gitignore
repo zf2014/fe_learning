@@ -48,7 +48,4 @@ Temporary Items
 
 
 .omo/*
-!.omo/goals/
-!.omo/evidence/
-!.omo/plans/
-!.omo/run-continuation/
+.superpowers/*
