@@ -47,4 +47,8 @@ Temporary Items
 .apdisk
 
 
-.omo
+.omo/*
+!.omo/skills/
+!.omo/goals/
+!.omo/evidence/
+!.omo/plans/

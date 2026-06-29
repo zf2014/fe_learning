@@ -1,0 +1,12 @@
+QA Evidence: Task 1 - Directory Structure
+Timestamp: 2026-06-29T10:40:00+08:00
+
+Directories created:
+- .omo/goals/ ✓
+- .omo/goals/active/ ✓
+- .omo/goals/completed/ ✓
+
+index.json content:
+{"active":[],"completed":[]}
+
+JSON validity: PASS
