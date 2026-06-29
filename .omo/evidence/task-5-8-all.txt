@@ -1,0 +1,26 @@
+QA Evidence: Tasks 5-8 — prometheus-loop SKILL.md
+Timestamp: 2026-06-29T10:48:00+08:00
+
+File: .omo/skills/prometheus-loop/SKILL.md
+Size: 405 lines
+
+Task 5 (Skeleton):
+  - All 7 stages documented: 17 matches ✓
+  - References goal-registry: YES ✓
+
+Task 6 (Auto-Transition):
+  - Auto-transition terms: 5 matches ✓
+  - Continuation Hook section: PRESENT ✓
+
+Task 7 (Router):
+  - 5 failure types: 13 matches ✓
+    EXECUTION_ERROR, PLAN_ISSUE, REQUIREMENT_CHANGE, QUALITY_FAIL, ADVERSE
+  - VerdictParser abstraction: 12 matches ✓
+  - Escalation procedure: 19 matches ✓
+
+Task 8 (State Machine + Safety):
+  - 8 states (6 main + 2 special): 18 matches ✓
+  - Safety boundaries: 13 matches ✓
+    (circuit breaker, retry limit, timeout, STOP signal, iteration cap)
+
+Status: ALL PASS ✓

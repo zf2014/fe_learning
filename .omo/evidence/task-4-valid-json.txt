@@ -1,0 +1,15 @@
+QA Evidence: Task 4 - Test Persistence Goal
+Timestamp: 2026-06-29T10:45:00+08:00
+
+File: .omo/goals/active/test-persistence.json
+JSON Valid: YES
+Subgoals: 3
+
+Dependency Checks:
+- sg-001 blockedBy: NONE ✓
+- sg-002 blockedBy [sg-001]: CORRECT ✓
+- sg-003 blockedBy [sg-002]: CORRECT ✓
+Chain: sg-001 → sg-002 → sg-003
+sg-001 status: completed (unblocks sg-002)
+sg-002 status: in_progress (expected - blocks sg-003)
+sg-003 status: pending (correctly blocked)

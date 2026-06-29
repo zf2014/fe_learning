@@ -1,0 +1,7 @@
+QA Evidence: Task 3 - goal-registry registration
+Timestamp: 2026-06-29T10:44:00+08:00
+
+Method: Symlink from .omo/skills/goal-registry/ → ~/.agents/skills/goal-registry/
+Symlink created: YES
+Verification: ls -la ~/.agents/skills/goal-registry/SKILL.md confirmed
+Status: REGISTERED ✓

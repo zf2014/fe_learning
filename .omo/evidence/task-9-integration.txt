@@ -1,0 +1,14 @@
+QA Evidence: Task 9 — Registration + Integration Test
+Timestamp: 2026-06-29T10:50:00+08:00
+
+Registration:
+- Symlink: .omo/skills/prometheus-loop/ → ~/.agents/skills/prometheus-loop/
+- Status: REGISTERED ✓
+
+Dependency References in SKILL.md:
+- goal-registry: 21 references ✓
+- Momus/Verifier: 22 references ✓
+- /start-work/Sisyphus: 4 references ✓
+- Prometheus: 15 references ✓
+
+Integration: ALL DEPENDENCIES DOCUMENTED ✓

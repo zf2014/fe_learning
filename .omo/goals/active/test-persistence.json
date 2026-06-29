@@ -1,0 +1,56 @@
+{
+  "goalId": "test-persistence",
+  "title": "测试目标持久化",
+  "description": "验证 Goal Registry 的持久化和依赖链功能",
+  "status": "in_progress",
+  "createdAt": "2026-06-29T10:00:00.000Z",
+  "completedAt": null,
+  "successCriteria": [
+    "JSON 文件可持久化存储",
+    "子目标依赖链正确解析",
+    "跨 session 续跑信息可恢复"
+  ],
+  "subgoals": [
+    {
+      "id": "sg-001",
+      "title": "基础设施搭建",
+      "status": "completed",
+      "planRef": ".omo/plans/test-infra.md",
+      "attempts": 1,
+      "lastResult": "completed",
+      "lastError": "",
+      "blockedBy": []
+    },
+    {
+      "id": "sg-002",
+      "title": "核心功能开发",
+      "status": "in_progress",
+      "planRef": ".omo/plans/test-core.md",
+      "attempts": 2,
+      "lastResult": "verifier_rejected",
+      "lastError": "缺少输入参数校验",
+      "blockedBy": ["sg-001"]
+    },
+    {
+      "id": "sg-003",
+      "title": "集成测试",
+      "status": "pending",
+      "planRef": ".omo/plans/test-integration.md",
+      "attempts": 0,
+      "lastResult": "",
+      "lastError": "",
+      "blockedBy": ["sg-002"]
+    }
+  ],
+  "config": {
+    "maxAttemptsPerSubgoal": 5,
+    "maxTotalFailures": 20,
+    "maxExecutionTimeMin": 120
+  },
+  "currentSubgoalIndex": 1,
+  "loopContext": {
+    "sessionCount": 2,
+    "lastActiveAt": "2026-06-29T09:30:00.000Z",
+    "continuationToken": "ses_continuation_test"
+  }
+}
